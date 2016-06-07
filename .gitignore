@@ -1,13 +1,10 @@
 0/
-1/
 2/
 3/
-*.zip
 reddit-doc
-*.tilt
+test.zip
+test.tilt
+data.sketch
 *.pyc
-*.png
-*.sketch
-*.json
 diff.py
 read_bytes.py
