@@ -1,0 +1,13 @@
+0/
+1/
+2/
+3/
+*.zip
+reddit-doc
+*.tilt
+*.pyc
+*.png
+*.sketch
+*.json
+diff.py
+read_bytes.py
