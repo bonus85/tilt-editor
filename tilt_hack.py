@@ -8,48 +8,108 @@ Also supports generating .sketch files from json
 import struct
 import json
 import pdb
+from collections import namedtuple
 
 END = '' # Struct format
 
+ORDERS_OF_TWO = [2**i for i in range(32)]
+MAX_BYTE_VALUE = ORDERS_OF_TWO[-1] - 1        
+
+def bits(byte, max_order=32):
+    assert byte <= MAX_BYTE_VALUE
+    return [min(byte&oot, 1) for oot in ORDERS_OF_TWO[:max_order]]
+
 class SketchEditor:
 
-    DEFAULT_HEADER = \
-        '\xcd\xa5v\xc5\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    STROKE_EXTENSION_ENCODING = {
+        0: 'I', #  uint32 flags
+    }
 
-    def __init__(self, header=None, expected_brush_strokes=None):
-        if header is None:
-            self.header = SketchEditor.DEFAULT_HEADER
-        else:
-            self.header = header
+    POINT_EXTENSION_ENCODING = {
+        0: 'f', #  float stroke pressure
+        1: 'I', #  uint32 timestamp (ms)
+    }
+
+    def __init__(self, sentinel=-982080051, version=5, expected_brush_strokes=None):
+        self.sentinel = sentinel
+        self.version = version
         self.expected_brush_strokes = expected_brush_strokes
         self.strokes = []
     
     @classmethod
     def from_sketch_file(cls, file_name):
         with open(file_name, 'rb') as f:
-            raw_file = f.read()
+            header_bytes = f.read(16)
+            sentinel, version, reserved, extra_size = \
+                struct.unpack(END+'iiii', header_bytes)
+            assert reserved == 0, \
+                '.sketch header reserved bytes are not zero: %d' %reserved
+            if extra_size > 0:
+                additional_header_data = f.read(extra_size)
+                print 'Warning: Additional header data present (skipping):'
+                print '    %r' %additional_header_data
+                
+            num_strokes_bytes = f.read(4)
+            num_strokes = struct.unpack(END+'i', num_strokes_bytes)[0]
         
-        header = raw_file[:16] # Unknown
-        brush_strokes = struct.unpack(END+'i', raw_file[16:20])[0] # Likely
+            instance = SketchEditor(sentinel, version , num_strokes)
         
-        instance = SketchEditor(header, brush_strokes)
-        
-        file_length = len(raw_file)
-        pos = 20
-        
-        while pos < file_length:
-            stroke_header = raw_file[pos:pos+40]
-            pos += 40
-            stroke = Stroke.from_header(stroke_header)
-            
-            for i in range(stroke.expected_stroke_points):
-                point = raw_file[pos:pos+36]
-                pos += 36
-                stroke_point = StrokePoint.from_data(point)
-                stroke.add(StrokePoint.from_data(point))
-            instance.add_stroke(stroke)
-        assert pos == file_length,\
-            'Error: file did not match format specification (incorrect length)'
+            for i in range(num_strokes):
+                stroke_header = f.read(32)
+                #print repr(stroke_header), len(stroke_header)
+                idx, r, g, b, a, brush_size, stroke_extension, point_extension = \
+                    struct.unpack(END+'ifffffII', stroke_header)
+                    
+                # int32/float32 for each set bit in stroke_extension & ffff
+                stroke_extension_mask = bits(stroke_extension & 0xffff, 16)
+                stroke_extension_data = {}
+                for i, bit in enumerate(stroke_extension_mask):
+                    if bit:
+                        fmt = SketchEditor.STROKE_EXTENSION_ENCODING.get(i, 'cccc') 
+                        stroke_extension_data[i] = struct.unpack(END+fmt, f.read(4))[0]
+                
+                # uint32 size + <size> for each set bit in stroke_extension & ~ffff
+                stroke_extension_mask_extra = bits(stroke_extension & ~0xffff, 16)
+                stroke_extension_data_extra = {}
+                for i, bit in enumerate(stroke_extension_mask_extra):
+                    if bit:
+                        size = struct.unpack(END+'I', f.read(4))[0]
+                        stroke_extension_data_extra[i] = f.read(size)
+                        
+                num_points = struct.unpack(END+'i', f.read(4))[0]
+                point_extension_mask = bits(point_extension & 0xffff)
+                stroke = Stroke(
+                    (r, g, b, a),
+                    brush_size,
+                    brush_index=idx,
+                    stroke_extension_mask=stroke_extension_mask,
+                    stroke_extension_data=stroke_extension_data,
+                    stroke_extension_mask_extra=stroke_extension_mask_extra,
+                    stroke_extension_data_extra=stroke_extension_data_extra,
+                    point_extension_mask=point_extension_mask,
+                    expected_points=num_points
+                )
+                
+                for j in range(num_points):
+                    point_data = f.read(28)
+                    x, y, z, or1, or2, or3, or4 = \
+                        struct.unpack(END+'fffffff', point_data) # position and orientation
+                    # int32/float32 for each set bit in point_extension
+                    point_extension_data = {}
+                    for i, bit in enumerate(point_extension_mask):
+                        if bit:
+                            fmt = SketchEditor.POINT_EXTENSION_ENCODING.get(i, 'cccc')
+                            point_extension_data[i] = struct.unpack(END+fmt, f.read(4))[0]
+                    point = StrokePoint(
+                        stroke,
+                        (x, y, z),
+                        (or1, or2, or3, or4),
+                        point_extension_data
+                    )
+                    stroke.add(point)
+                instance.add_stroke(stroke)
+            assert f.read() == '',\
+                'Error: file did not match format specification (incorrect length)'
         return instance
     
     @classmethod
@@ -68,49 +128,67 @@ class SketchEditor:
         self.strokes.append(stroke)
         
     def write(self, file_name):
-        with open(file_name, 'w') as f:
-            f.write(self.header)
-            f.write(struct.pack(END+'i', len(self.strokes)))
+        with open(file_name, 'wb') as f:
+            f.write(struct.pack(END+'iiiii',
+                self.sentinel, self.version, 0, 0, len(self.strokes)))
             for stroke in self.strokes:
                 f.write(stroke.pack())
     
     def info(self):
+        print 'Sentinel: %d' %self.sentinel
+        print 'Version: %d' %self.version
         print 'Brush strokes: %s expected, %d actual' %(
             self.expected_brush_strokes, len(self.strokes))
 
 class Stroke:
-
-    DEFAULT_UNKNOWN_STROKE_HEADER = \
-        '\x01\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00' # Stroke style?
     
-    def __init__(self, color, brush_size, unknown_stroke_header=None,
-            expected_stroke_points=None):
-        self.color = color
+    def __init__(
+                self,
+                (r, g, b, a),
+                brush_size,
+                brush_index=0,
+                stroke_extension_mask=None,
+                stroke_extension_data=None,
+                stroke_extension_mask_extra=None,
+                stroke_extension_data_extra=None,
+                point_extension_mask=None,
+                expected_points=None
+            ):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
         self.brush_size = brush_size
-        self.points = []
-        self.expected_stroke_points = expected_stroke_points
-        if unknown_stroke_header is None:
-            self.unknown_stroke_header = Stroke.DEFAULT_UNKNOWN_STROKE_HEADER
-        else:
-            self.unknown_stroke_header = unknown_stroke_header
-
-    @classmethod
-    def from_header(cls, stroke_header):
-        if stroke_header[:4] != '\x00\x00\x00\x00':
-            print 'Warning: Expected four zero bytes in stroke header'
-            print struct.unpack(END+'cccc', stroke_header[:4])
-        color = struct.unpack(END+'ffff', stroke_header[4:20])
-        brush_size = struct.unpack(END+'f', stroke_header[20:24])[0]
-        unknown_stroke_header = stroke_header[24:36]
-        stroke_points = struct.unpack(END+'i', stroke_header[36:])[0]
+        self.brush_index = brush_index
         
-        return Stroke(color, brush_size, unknown_stroke_header, stroke_points)
+        self.stroke_extension_mask = stroke_extension_mask
+        self.stroke_extension_mask_extra = stroke_extension_mask_extra
+        self.point_extension_mask = point_extension_mask
+        
+        self.stroke_extension_data = stroke_extension_data
+        self.stroke_extension_data_extra = stroke_extension_data_extra
+        
+        self.expected_stroke_points = expected_points
+        self.points = []
     
     def pack(self):
-        s = '\x00\x00\x00\x00'
-        args = self.color + (self.brush_size, )
-        s += struct.pack(END+'fffff', *args)
-        s += self.unknown_stroke_header
+        stroke_extension = sum(b * oot for b, oot in 
+            zip(self.stroke_extension_mask, ORDERS_OF_TWO[:16]))
+        stroke_extension += sum(b * oot for b, oot in 
+            zip(self.stroke_extension_mask_extra, ORDERS_OF_TWO[16:]))
+        point_extension = sum(b * oot for b, oot in 
+            zip(self.point_extension_mask, ORDERS_OF_TWO))
+        s = struct.pack(END+'ifffffII',
+            self.brush_index, self.r, self.g, self.b, self.a,
+            self.brush_size, stroke_extension, point_extension)
+        for i, bit in enumerate(self.stroke_extension_mask):
+            if bit:
+                fmt = SketchEditor.STROKE_EXTENSION_ENCODING.get(i, 'cccc') 
+                s += struct.pack(END+fmt, self.stroke_extension_data[i])
+        for i, bit in enumerate(self.stroke_extension_mask_extra):
+            if bit:
+                s += struct.pack(END+'I', len(self.stroke_extension_data_extra[i]))
+                s += self.stroke_extension_data_extra[i]
         s += struct.pack(END+'i', len(self.points))
         for point in self.points:
             s += point.pack()
@@ -120,9 +198,16 @@ class Stroke:
         self.points.append(point)
     
     def info(self):
-        print 'Stroke color: (%f, %f, %f, %f)' %self.color
+        print 'Stroke color: (%f, %f, %f, %f)' %(self.r, self.g, self.b, self.a)
         print 'Brush size: %f' %self.brush_size
-        print 'Unknown header: %r' %self.unknown_stroke_header
+        print 'Stroke extension:'
+        for i, bit in enumerate(self.stroke_extension_mask):
+            if bit:
+                print '    %d: %r' %(i, self.stroke_extension_data[i])
+        print 'Stroke extension (extra):'
+        for i, bit in enumerate(self.stroke_extension_mask_extra):
+            if bit:
+                print '    %d: %r' %(i, self.stroke_extension_data_extra[i])
         print 'Number of stroke points: %s expected, %d actual' %(
             self.expected_stroke_points, len(self.points))
         print 'First point:'
@@ -132,43 +217,41 @@ class Stroke:
     
 
 class StrokePoint:
-
-    DEFAULT_UNKNOWN_DATA = '\x0f\x1d\x00\x00'
     
-    def __init__(self, position, orientation=(0.,0.,0.,0.),
-            trigger_pressure=1.0, unknown_point_data=None):
-        self.position = position
-        self.orientation = orientation
-        self.trigger_pressure = trigger_pressure
-        if unknown_point_data is None:
-            self.unknown_point_data = StrokePoint.DEFAULT_UNKNOWN_DATA
-        else:
-            self.unknown_point_data = unknown_point_data
-
-    @classmethod
-    def from_data(cls, data):
-        assert len(data) == 36, 'Expected 36 byte str, got %d' %len(data)
-        # Looks like
-        position = struct.unpack(END+'fff', data[0:12])
-        # Looks like
-        orientation = struct.unpack(END+'ffff', data[12:28])
-        # Looks like
-        trigger_pressure = struct.unpack(END+'f', data[28:32])[0]
-        unknown_point_data = data[32:36]
-        return StrokePoint(position, orientation,
-            trigger_pressure, unknown_point_data)
+    def __init__(
+                self,
+                parent_stroke,
+                (x, y, z),
+                (or1, or2, or3, or4)=(0.,0.,0.,0.),
+                point_extension_data=None
+            ):
+        self.parent_stroke = parent_stroke
+        self.x = x
+        self.y = y
+        self.z = z
+        self.or1 = or1
+        self.or2 = or2
+        self.or3 = or3
+        self.or4 = or4
+        self.point_extension_data = point_extension_data
     
     def pack(self):
-        args = self.position + self.orientation + (self.trigger_pressure, )
-        return struct.pack(END+'ffffffff', *args) + self.unknown_point_data
+        s = struct.pack(END+'fffffff',
+            self.x, self.y, self.z, self.or1, self.or2, self.or3, self.or4)
+        for i, bit in enumerate(self.parent_stroke.point_extension_mask):
+            if bit:
+                fmt = SketchEditor.POINT_EXTENSION_ENCODING.get(i, 'cccc')
+                s += struct.pack(END+fmt, self.point_extension_data[i])
+        return s
     
     def info(self):
-        print 'Position: (%f, %f, %f)' %self.position
-        print 'Orientation: (%f, %f, %f, %f)' %self.orientation
-        print 'Trigger pressure: %f' %self.trigger_pressure
-        print 'Unknown: %r' %self.unknown_point_data
+        print 'Position: (%f, %f, %f)' %(self.x, self.y, self.z)
+        print 'Orientation: (%f, %f, %f, %f)' %(self.or1, self.or2, self.or3, self.or4)
         
-                
+        print 'Point extension:'
+        for i, bit in enumerate(self.parent_stroke.point_extension_mask):
+            if bit:
+                print '    %d: %r' %(i, self.point_extension_data[i])
 
 if __name__ == '__main__':
     import argparse
@@ -180,10 +263,11 @@ if __name__ == '__main__':
     name, ext = os.path.splitext(opts.file_name)
     if ext == '.sketch':
         t = SketchEditor.from_sketch_file(opts.file_name)
+        
         t.info()
         for stroke in t.strokes:
             stroke.info()
-        #t.write('test.sketch')
+        t.write('data.sketch')
     elif ext == '.json':
         t = SketchEditor.from_json(opts.file_name)
         t.info()
