@@ -1,20 +1,24 @@
 #!/usr/bin/env python
 """
+Analyze and edit .sketch files (internal in .tilt)
+Also supports generating .sketch files from json
+
 @author: Sindre Tosse
 """
 import struct
+import json
 import pdb
 
 END = '' # Struct format
 
-class TiltEditor:
+class SketchEditor:
 
     DEFAULT_HEADER = \
         '\xcd\xa5v\xc5\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 
-    def __init__(self, header=None, expected_brush_strokes=0):
+    def __init__(self, header=None, expected_brush_strokes=None):
         if header is None:
-            self.header = TiltEditor.DEFAULT_HEADER
+            self.header = SketchEditor.DEFAULT_HEADER
         else:
             self.header = header
         self.expected_brush_strokes = expected_brush_strokes
@@ -28,7 +32,7 @@ class TiltEditor:
         header = raw_file[:16] # Unknown
         brush_strokes = struct.unpack(END+'i', raw_file[16:20])[0] # Likely
         
-        instance = TiltEditor(header, brush_strokes)
+        instance = SketchEditor(header, brush_strokes)
         
         file_length = len(raw_file)
         pos = 20
@@ -48,6 +52,18 @@ class TiltEditor:
             'Error: file did not match format specification (incorrect length)'
         return instance
     
+    @classmethod
+    def from_json(cls, file_name):
+        with open(file_name) as f:
+            json_sketch = json.load(f)
+        instance = SketchEditor()
+        for stroke_spec in json_sketch['strokes']:
+            stroke = Stroke(tuple(stroke_spec['color']), stroke_spec['brush_size'])
+            for position in stroke_spec['points']:
+                stroke.add(StrokePoint(tuple(position)))
+            instance.add_stroke(stroke)
+        return instance
+    
     def add_stroke(self, stroke):
         self.strokes.append(stroke)
         
@@ -59,7 +75,7 @@ class TiltEditor:
                 f.write(stroke.pack())
     
     def info(self):
-        print 'Brush strokes: %d expected, %d actual' %(
+        print 'Brush strokes: %s expected, %d actual' %(
             self.expected_brush_strokes, len(self.strokes))
 
 class Stroke:
@@ -71,7 +87,6 @@ class Stroke:
             expected_stroke_points=None):
         self.color = color
         self.brush_size = brush_size
-        self.stroke_points = 0
         self.points = []
         self.expected_stroke_points = expected_stroke_points
         if unknown_stroke_header is None:
@@ -108,8 +123,8 @@ class Stroke:
         print 'Stroke color: (%f, %f, %f, %f)' %self.color
         print 'Brush size: %f' %self.brush_size
         print 'Unknown header: %r' %self.unknown_stroke_header
-        print 'Number of stroke points: %d expected, %d actual' %(
-            self.stroke_points, len(self.points))
+        print 'Number of stroke points: %s expected, %d actual' %(
+            self.expected_stroke_points, len(self.points))
         print 'First point:'
         self.points[0].info()
         print 'Last point:'
@@ -157,13 +172,24 @@ class StrokePoint:
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(
-        description='Analyze and edit .sketch files (internal in .tilt)')
+    import os
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file_name", type=str, help="Name of file to open")
     opts = parser.parse_args() # Parses sys.argv by default
-    t = TiltEditor.from_sketch_file(opts.file_name)
-    t.info()
-    for stroke in t.strokes:
-        stroke.info()
-    #t.write('test.sketch')
+    
+    name, ext = os.path.splitext(opts.file_name)
+    if ext == '.sketch':
+        t = SketchEditor.from_sketch_file(opts.file_name)
+        t.info()
+        for stroke in t.strokes:
+            stroke.info()
+        #t.write('test.sketch')
+    elif ext == '.json':
+        t = SketchEditor.from_json(opts.file_name)
+        t.info()
+        for stroke in t.strokes:
+            stroke.info()
+        t.write('data.sketch')
+    else:
+        print 'Unknown file type: %s' %ext
 
