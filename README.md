@@ -6,5 +6,5 @@ Inspired by reddit user /u/DrewFitz: [Tilt brush reverse engineering](https://ww
 
 A .tilt file is an uncompressed .zip file with an additional header. The zip contains the following files: A thumbnail PNG, the brush stroke data in a custom binary format (data.sketch), and a JSON metadata file.
 
-Note that the tool is in very early development. The exported .tilt file from a json specification does not work as intended. The stroke is drawn, but all but one vector disappears when the stroke is completed. 
+The script can generate a new .tilt file from a json template. Only stroke color, brush size and point position is supported currently. For some reason, the generated tilt file does not behave as expected if two adjacent points in a stroke are too far from each other. For this reason, the generator will add extra points so that the maximum distance between two points is `0.5`.
 
