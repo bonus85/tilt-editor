@@ -270,35 +270,10 @@ class StrokePoint:
             if bit:
                 print '    %d: %r' %(i, self.point_extension_data[i])
 
-def transform_sketch(sketch, mode):
-    if mode == "two_points":
-        print "Removing all but two points from first stroke"
-        while(len(sketch.strokes[0].points) > 2):
-            sketch.strokes[0].points.pop()
-    elif mode == "three_points":
-        print "Removing all but three points from first stroke"
-        while(len(sketch.strokes[0].points) > 3):
-            sketch.strokes[0].points.pop()
-    elif mode == "move_point":
-        print "Moving first point"
-        sketch.strokes[0].points[0].x += 1
-        sketch.strokes[0].points[0].y += 1
-        sketch.strokes[0].points[0].z += 1
-    elif mode == "move_all":
-        print "Moving all points"
-        for point in sketch.strokes[0].points:
-            point.x += 1
-            point.y += 1
-            point.z += 1
-    else:
-        raise ValueError("Unknown mode: %s" %mode)
-
 if __name__ == '__main__':
     import argparse
     import os
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-m", "--mode", type=str, action="store", default=None,
-        help="mode (.sketch files only)")
     parser.add_argument("file_name", type=str, help="Name of file to open")
     opts = parser.parse_args() # Parses sys.argv by default
     
@@ -314,9 +289,6 @@ if __name__ == '__main__':
         t.strokes[0].stroke_extension_mask_extra = [0 for i in range(16)]
         print 'Removing point extension'
         t.strokes[0].point_extension_mask = [0 for i in range(32)]
-        
-        if opts.mode is not None:
-            transform_sketch(t, opts.mode)
         
         print "Saving"
         t.write('data.sketch')
