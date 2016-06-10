@@ -8,3 +8,5 @@ A .tilt file is an uncompressed .zip file with an additional header. The zip con
 
 The tool can generate a new .tilt file from a json template. Only stroke color, brush size and point position is supported currently. For some reason, the generated tilt file does not behave as expected if two adjacent points in a stroke are too far from each other. For this reason, the generator will add extra points so that the maximum distance between two points is `0.5`.
 
+Wireframes can be created from .stl files.
+

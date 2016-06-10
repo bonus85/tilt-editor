@@ -8,8 +8,15 @@ Also supports generating .sketch files from json
 import struct
 import json
 import pdb
-import math
 import numpy as np
+try:
+    from stl import mesh
+    STL_SUPPORTED = True
+    STL_COLOR = (1., 0., 0., 1.)
+    STL_BRUSH_SIZE = 0.08
+except ImportError:
+    print 'stl files not supported (run "pip install numpy-stl" to enable)'
+    STL_SUPPORTED = False
 
 END = '' # Struct format
 
@@ -137,6 +144,30 @@ class SketchEditor:
                 stroke.add(StrokePoint(stroke, tuple(position)))
             instance.add_stroke(stroke)
         return instance
+    
+    @classmethod
+    def from_stl(cls, file_name):
+        assert STL_SUPPORTED
+        stl_mesh = mesh.Mesh.from_file(file_name)
+        instance = SketchEditor()
+        for p0, p1, p2 in zip(stl_mesh.v0, stl_mesh.v1, stl_mesh.v2):
+            stroke = Stroke(STL_COLOR, STL_BRUSH_SIZE)
+            positions = np.array([p0, p1, p2, p0], dtype=float)
+            prev_pos = np.roll(positions, 1, 0)
+            prev_pos[0][0] = np.nan
+            for prev, position in zip(prev_pos, positions):
+                if not np.isnan(prev[0]):
+                    dv = MAX_DV * (position-prev) / np.linalg.norm(position-prev)
+                    print prev, position, dv
+                    while np.linalg.norm(position-prev) > MAX_DV:
+                        prev += dv
+                        #print prev
+                        stroke.add(StrokePoint(stroke, tuple(prev)))
+                #print position
+                stroke.add(StrokePoint(stroke, tuple(position)))
+            instance.add_stroke(stroke)
+        return instance
+            
     
     def add_stroke(self, stroke):
         self.strokes.append(stroke)
@@ -294,6 +325,12 @@ if __name__ == '__main__':
         t.write('data.sketch')
     elif ext == '.json':
         t = SketchEditor.from_json(opts.file_name)
+        t.info()
+        for stroke in t.strokes:
+            stroke.info()
+        t.write('data.sketch')
+    elif ext == '.stl':
+        t = SketchEditor.from_stl(opts.file_name)
         t.info()
         for stroke in t.strokes:
             stroke.info()

@@ -8,3 +8,5 @@ test.tilt
 *.pyc
 diff.py
 read_bytes.py
+*.stl
+/data.sketch
