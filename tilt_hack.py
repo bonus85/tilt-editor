@@ -178,6 +178,14 @@ class SketchEditor:
                 self.sentinel, self.version, 0, 0, len(self.strokes)))
             for stroke in self.strokes:
                 f.write(stroke.pack())
+        
+    def write_points(self, file_name):
+        npoints = sum(len(s.points) for s in self.strokes)
+        with open(file_name, 'w') as f:
+            f.write(str(npoints)+'\n')
+            for stroke in self.strokes:
+                for point in stroke.points:
+                    f.write('{p.x} {p.y} {p.z}\n'.format(p=point))
     
     def info(self):
         print 'Sentinel: %d' %self.sentinel

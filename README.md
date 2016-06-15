@@ -10,3 +10,5 @@ The tool can generate a new .tilt file from a json template. Only stroke color, 
 
 Wireframes can be created from .stl files.
 
+xyz coordinates in tilt brush with reference to standard forward position `(x: left to right ~[-10, 10], y: down to up ~[0, 20], z: back to forward ~[-10, 10])`
+
